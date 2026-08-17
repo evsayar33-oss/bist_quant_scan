@@ -1,0 +1,38 @@
+name: BIST Daily Quant Scan
+
+on:
+  schedule:
+    # Her gün Türkiye saati ile 17:30'da çalışır (14:30 UTC)
+    - cron: '30 14 * * *'
+  workflow_dispatch: # Manuel çalıştırma butonunu aktif eder
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+        with:
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Pipeline
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: python main.py
+
+      - name: Commit & Push Changes
+        run: |
+          git config --global user.name "QuantBot"
+          git config --global user.email "bot@github.com"
+          git add sonuclar.csv gecmis_veri.csv
+          git commit -m "Veri Guncelleme: $(date)" || echo "Degisiklik yok."
+          git push
