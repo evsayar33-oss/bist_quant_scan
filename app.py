@@ -5,36 +5,26 @@ import os
 st.set_page_config(page_title="BIST Quant Radar", layout="wide")
 st.title("📊 BIST Nicel Mikroyapı Radarı")
 
-# Dosya kontrolü
 if os.path.exists("sonuclar.csv"):
-    try:
-        # Veriyi oku
-        df = pd.read_csv("sonuclar.csv")
-        
-        # Metrikler
-        col1, col2 = st.columns(2)
-        col1.metric("Taranan Toplam Hisse", len(df))
-        col2.info("Veriler her akşam 17:30'da otomatik güncellenir.")
+    df = pd.read_csv("sonuclar.csv")
+    st.metric("Taranan Hisse", len(df))
 
-        st.subheader("🚀 En Yüksek Quant Skorlu Hisseler")
-        
-        # Görüntülenecek sütunlar
-        cols = ['ticker', 'quant_score', 'rvol_ratio', 'pct_hhi', 'change_%', 'close', 'gecmis_yetersiz']
-        disp_df = df[cols].copy()
-        
-        # Sütun isimlerini Türkçeleştir
-        disp_df.columns = ['Hisse', 'Skor', 'RVOL', 'HHI %', 'Değişim %', 'Fiyat', 'Yeni Kayıt']
+    # Sütun düzenleme ve isimlendirme
+    cols = ['ticker', 'quant_score', 'prev_quant_score', 'score_diff', 'rvol_ratio', 'pct_hhi', 'change_%']
+    names = ['Hisse', 'Bugünkü Skor', 'Dünkü Skor', 'Skor Farkı', 'RVOL', 'HHI Dilimi', 'Değişim %']
 
-        # Tabloyu renklendirerek göster (Matplotlib hatasını bu blok çözer)
-        st.dataframe(
-            disp_df.style.background_gradient(subset=['Skor'], cmap='RdYlGn'),
-            use_container_width=True,
-            height=600
-        )
-        
-        st.caption("💡 Skor: 100'e yakınsa sinyal güçlüdür. RVOL: 1.0'dan büyükse hacim artışı vardır.")
+    # 1. TABLO: EN YÜKSEK SKORLAR
+    st.subheader("🚀 En Yüksek Quant Skorlu Hisseler (Top 20)")
+    top_df = df.head(20)[cols].copy()
+    top_df.columns = names
+    st.dataframe(top_df.style.background_gradient(subset=['Bugünkü Skor'], cmap='RdYlGn'), use_container_width=True)
 
-    except Exception as e:
-        st.error(f"Veri okunurken bir hata oluştu: {e}")
+    # 2. TABLO: EN ÇOK DÜŞENLER
+    st.subheader("📉 Skoru En Çok Düşen Hisseler (Güç Kaybedenler)")
+    loser_df = df.sort_values(by='score_diff', ascending=True).head(10)[cols].copy()
+    loser_df.columns = names
+    st.dataframe(loser_df.style.background_gradient(subset=['Skor Farkı'], cmap='Reds'), use_container_width=True)
+    
+    st.caption("💡 RVOL > 1.0 ise hacim artışı, Skor Farkı pozitifse nicel güçlenme var demektir.")
 else:
-    st.warning("Henüz tarama verisi oluşmadı. GitHub Actions işleminin bitmesini bekleyin.")
+    st.info("Veri bekleniyor...")
