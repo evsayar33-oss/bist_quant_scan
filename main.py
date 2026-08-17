@@ -11,9 +11,12 @@ def run_pipeline():
     bugun_dt = datetime.now(tr_tz)
     bugun_str = bugun_dt.strftime('%Y-%m-%d')
     
+    print(f"Tarama Başladı: {bugun_str}")
+    
     df = get_bist_tickers()
     if df.empty: return
 
+    print("Takas verileri çekiliyor...")
     hhi_list = []
     for ticker in df['ticker']:
         shares = get_takas_data(ticker)
@@ -23,14 +26,14 @@ def run_pipeline():
     df_gecmis = gecmis_veriyi_yukle()
     df = calculate_quant_scores(df, df_gecmis)
 
+    # Dashboard dosyası
     df.to_csv("sonuclar.csv", index=False)
 
-    # Geçmişe kaydet
+    # Geçmişe kaydet (Hizalama sütunları)
     df_kayit = df[['ticker', 'close', 'volume', 'change_%', 'hhi_score', 'quant_score']].copy()
     df_kayit['tarih'] = bugun_str
     
     if not df_gecmis.empty:
-        # Tarih kontrolünü string bazlı yapalım
         tarih_list = df_gecmis['tarih'].dt.strftime('%Y-%m-%d').unique()
         if bugun_str not in tarih_list:
             df_kayit.to_csv(GECMIS_DOSYA, mode='a', header=False, index=False)
@@ -44,32 +47,21 @@ def send_telegram_alert(df):
     chat_id = os.environ.get("CHAT_ID")
     if not token or not chat_id: return
 
-    top_rank = df.head(10)
-    # Sadece anlamlı farkı olanları al
-    gainers = df[df['score_diff'] > 0.1].sort_values(by='score_diff', ascending=False).head(10)
-    losers = df[df['score_diff'] < -0.1].sort_values(by='score_diff', ascending=True).head(10)
+    top_10 = df.head(10)
+    # Skoru en çok düşen 10 hisse
+    losers_10 = df.sort_values(by='score_diff', ascending=True).head(10)
 
-    msg = "🏆 *BIST QUANT LİDERLER*\n"
-    for _, r in top_rank.iterrows():
-        diff = f"({r['score_diff']:+.1f})" if not pd.isna(r['prev_quant_score']) else "(Yeni)"
-        msg += f"• #{r['ticker']}: *{r['quant_score']:.1f}* {diff}\n"
+    msg = "🏆 *BIST QUANT LİDERLER (TOP 10)*\n"
+    for _, r in top_10.iterrows():
+        msg += f"• #{r['ticker']}: *{r['quant_score']:.1f}* ({r['score_diff']:+.1f})\n"
 
-    msg += "\n🚀 *ATAK YAPANLAR*\n"
-    if gainers.empty:
-        msg += "_Henüz yeterli kıyas verisi yok._\n"
-    else:
-        for _, r in gainers.iterrows():
-            msg += f"• #{r['ticker']}: *{r['quant_score']:.1f}* 🔥 {r['score_diff']:+.1f}\n"
-
-    msg += "\n📉 *GÜÇ KAYBEDENLER*\n"
-    if losers.empty:
-        msg += "_Henüz yeterli kıyas verisi yok._\n"
-    else:
-        for _, r in losers.iterrows():
-            msg += f"• #{r['ticker']}: *{r['quant_score']:.1f}* ⚠️ {r['score_diff']:+.1f}\n"
+    msg += "\n📉 *SKORU EN ÇOK DÜŞENLER (TOP 10)*\n"
+    for _, r in losers_10.iterrows():
+        if r['score_diff'] < 0:
+            msg += f"• #{r['ticker']}: *{r['quant_score']:.1f}* ⚠️ {r['score_diff']:.1f}\n"
     
-    requests.post(f"https://api.telegram.org/bot{token}/sendMessage", 
-                  json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"})
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    requests.post(url, json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"})
 
 if __name__ == "__main__":
     run_pipeline()
