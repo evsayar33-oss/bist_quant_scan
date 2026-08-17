@@ -9,7 +9,6 @@ MIN_GECMIS_GUN = 5
 def gecmis_veriyi_yukle():
     if os.path.exists(GECMIS_DOSYA):
         try:
-            # Tarih formatını garantiye al
             df = pd.read_csv(GECMIS_DOSYA)
             df['tarih'] = pd.to_datetime(df['tarih'])
             return df
@@ -49,20 +48,17 @@ def calculate_quant_scores(df, df_gecmis):
     df['pct_hhi'] = df['hhi_score'].rank(pct=True) * 100
     df['quant_score'] = (df['pct_rvol'] * 0.40) + (df['pct_change'] * 0.30) + (df['pct_hhi'] * 0.30)
 
-    # 3) BİR ÖNCEKİ GÜNÜN SKORUNU BUL
-    df['prev_quant_score'] = df['quant_score'] # Varsayılan: bugünkü skor
+    # 3) SKOR FARKLARINI HESAPLA
+    df['prev_quant_score'] = df['quant_score']
     df['score_diff'] = 0.0
 
     if not df_gecmis.empty:
-        # En son kayıtlı tarihi bul (Bugünden önceki en yakın gün)
         son_tarih = df_gecmis['tarih'].max()
         df_son = df_gecmis[df_gecmis['tarih'] == son_tarih]
-        
-        # Eski skorları bir sözlüğe al
         eski_skor_map = dict(zip(df_son['ticker'], df_son['quant_score']))
         
-        # Map işlemini yap
-        df['prev_quant_score'] = df['ticker'].map(lambda x: eski_skor_map.get(x, df['quant_score'][df['ticker']==x].iloc[0]))
+        # Yeni hisse ise dünkü skorunu bugünküyle aynı kabul et (fark 0 olur)
+        df['prev_quant_score'] = df['ticker'].apply(lambda x: eski_skor_map.get(x, df.loc[df['ticker']==x, 'quant_score'].values[0]))
         df['score_diff'] = df['quant_score'] - df['prev_quant_score']
 
     return df.sort_values(by='quant_score', ascending=False).reset_index(drop=True)
