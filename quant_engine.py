@@ -49,16 +49,18 @@ def calculate_quant_scores(df, df_gecmis):
     df['quant_score'] = (df['pct_rvol'] * 0.40) + (df['pct_change'] * 0.30) + (df['pct_hhi'] * 0.30)
 
     # 3) SKOR FARKLARINI HESAPLA
-    df['prev_quant_score'] = df['quant_score']
+    df['prev_quant_score'] = np.nan
     df['score_diff'] = 0.0
 
     if not df_gecmis.empty:
-        son_tarih = df_gecmis['tarih'].max()
-        df_son = df_gecmis[df_gecmis['tarih'] == son_tarih]
-        eski_skor_map = dict(zip(df_son['ticker'], df_son['quant_score']))
-        
-        # Yeni hisse ise dünkü skorunu bugünküyle aynı kabul et (fark 0 olur)
-        df['prev_quant_score'] = df['ticker'].apply(lambda x: eski_skor_map.get(x, df.loc[df['ticker']==x, 'quant_score'].values[0]))
-        df['score_diff'] = df['quant_score'] - df['prev_quant_score']
+        # En son tarihi bul ama bugünü hariç tut (eğer bugün yanlışlıkla kaydedilmişse)
+        gecmis_tarihler = df_gecmis['tarih'].dt.date.unique()
+        if len(gecmis_tarihler) >= 1:
+            son_tarih = max(gecmis_tarihler)
+            df_son = df_gecmis[df_gecmis['tarih'].dt.date == son_tarih]
+            eski_skor_map = dict(zip(df_son['ticker'], df_son['quant_score']))
+            
+            df['prev_quant_score'] = df['ticker'].map(eski_skor_map)
+            df['score_diff'] = df['quant_score'] - df['prev_quant_score'].fillna(df['quant_score'])
 
     return df.sort_values(by='quant_score', ascending=False).reset_index(drop=True)
