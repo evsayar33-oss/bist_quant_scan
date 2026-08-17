@@ -7,18 +7,13 @@ from data_fetcher import get_bist_tickers, get_takas_data
 from quant_engine import calculate_hhi, calculate_quant_scores, gecmis_veriyi_yukle, GECMIS_DOSYA
 
 def run_pipeline():
-    # TR Zaman Dilimi Ayarı
     tr_tz = pytz.timezone('Europe/Istanbul')
-    bugun_str = datetime.now(tr_tz).strftime('%Y-%m-%d')
-    
-    print(f"--- {bugun_str} BIST Quant Taraması Başladı ---")
+    bugun_dt = datetime.now(tr_tz)
+    bugun_str = bugun_dt.strftime('%Y-%m-%d')
     
     df = get_bist_tickers()
-    if df.empty:
-        print("BIST verisi alinamadi.")
-        return
+    if df.empty: return
 
-    print("Takas verileri toplanıyor...")
     hhi_list = []
     for ticker in df['ticker']:
         shares = get_takas_data(ticker)
@@ -28,41 +23,47 @@ def run_pipeline():
     df_gecmis = gecmis_veriyi_yukle()
     df = calculate_quant_scores(df, df_gecmis)
 
-    # Günlük sonuç kaydı (Dashboard için)
+    # Dashboard için kaydet
     df.to_csv("sonuclar.csv", index=False)
 
-    # Geçmiş veri kaydı (Append - RVOL için)
-    df_kayit = df[['ticker', 'close', 'volume', 'change_%', 'hhi_score']].copy()
+    # Geçmişe ekle
+    df_kayit = df[['ticker', 'close', 'volume', 'change_%', 'hhi_score', 'quant_score']].copy()
     df_kayit['tarih'] = bugun_str
     
-    # Dosya varsa ve bugünün verisi zaten yazılmışsa (tekrar çalıştırma koruması)
     if not df_gecmis.empty:
-        if bugun_str in df_gecmis['tarih'].astype(str).values:
-            print("Bugünün verisi zaten kayıtlı, üstüne yazılmıyor.")
-        else:
+        # Bugünün verisi zaten varsa ekleme yapma (mükerrer kayıt önleyici)
+        gecmis_tarihler = df_gecmis['tarih'].dt.strftime('%Y-%m-%d').values
+        if bugun_str not in gecmis_tarihler:
             df_kayit.to_csv(GECMIS_DOSYA, mode='a', header=False, index=False)
     else:
         df_kayit.to_csv(GECMIS_DOSYA, index=False)
 
-    # Telegram Bildirimi
     send_telegram_alert(df)
 
 def send_telegram_alert(df):
     token = os.environ.get("TELEGRAM_TOKEN")
     chat_id = os.environ.get("CHAT_ID")
-    if token and chat_id:
-        top = df.head(5)
-        msg = "🚨 *BIST QUANT RADAR: TOP 5*\n\n"
-        for _, r in top.iterrows():
-            msg += f"#{r['ticker']} | *Skor: {r['quant_score']:.1f}*\n"
-            msg += f"• RVOL: {r['rvol_ratio']:.2f}x | HHI Yzd: %{r['pct_hhi']:.0f}\n"
-            msg += f"• Fiyat: %{r['change_%']:.2f}\n\n"
-        
-        try:
-            url = f"https://api.telegram.org/bot{token}/sendMessage"
-            requests.post(url, json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"})
-        except:
-            print("Telegram hatasi.")
+    if not token or not chat_id: return
+
+    # Liderler (Top 10)
+    top_10 = df.head(10)
+    # Kaybedenler (Skor Farkı En Düşük 10)
+    losers_10 = df.sort_values(by='score_diff', ascending=True).head(10)
+
+    msg = "🏆 *BIST QUANT: TOP 10 LİDER*\n"
+    msg += "Hisse | Bugün | (Dün) | Fark\n"
+    msg += "---------------------------\n"
+    for _, r in top_10.iterrows():
+        msg += f"#{r['ticker']} | *{r['quant_score']:.1f}* | ({r['prev_quant_score']:.1f}) | {r['score_diff']:+.1f}\n"
+
+    msg += "\n📉 *BIST QUANT: EN ÇOK DÜŞENLER*\n"
+    msg += "Hisse | Bugün | (Dün) | Fark\n"
+    msg += "---------------------------\n"
+    for _, r in losers_10.iterrows():
+        msg += f"#{r['ticker']} | *{r['quant_score']:.1f}* | ({r['prev_quant_score']:.1f}) | {r['score_diff']:+.1f}\n"
+    
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    requests.post(url, json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"})
 
 if __name__ == "__main__":
     run_pipeline()
