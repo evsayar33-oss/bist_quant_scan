@@ -1,26 +1,22 @@
 import streamlit as st
 import pandas as pd
 import os
- 
-st.set_page_config(page_title="BIST Quant Radar", layout="centered")
-st.title("BIST Nicel Takas & Mikroyapi Radari")
- 
+
+st.set_page_config(page_title="BIST Quant Radar", layout="wide")
+st.title("📊 BIST Nicel Mikroyapı Radarı")
+
 if os.path.exists("sonuclar.csv"):
     df = pd.read_csv("sonuclar.csv")
- 
-    st.metric(label="Taranan Toplam Hisse", value=len(df))
-      st.subheader("En Yuksek Quant Skorlu Hisseler")
-    st.dataframe(
-        df[[
-            'ticker', 'quant_score', 'rvol_ratio', 'pct_hhi',
-            'change_%', 'close', 'gecmis_yetersiz'
-        ]],
-        use_container_width=True
-    )
-    st.caption(
-        "rvol_ratio: hissenin kendi son 20 gunluk ortalama hacmine gore bugunku hacim orani. "
-        "gecmis_yetersiz = True: bu hisse icin henuz 5 gunden az kayit var, RVOL evren "
-        "medyaniyla dolduruldu (sistem yeni kuruldugunda ilk gunlerde beklenen bir durum)."
-    )
+    
+    col1, col2 = st.columns(2)
+    col1.metric("Taranan Hisse", len(df))
+    col2.info("Veriler her akşam 18:45'te güncellenir.")
+
+    st.subheader("🚀 En Yüksek Skorlu Hisseler")
+    # Görsel düzenleme
+    disp_df = df[['ticker', 'quant_score', 'rvol_ratio', 'pct_hhi', 'change_%', 'close', 'gecmis_yetersiz']].copy()
+    disp_df.columns = ['Hisse', 'Quant Skor', 'RVOL Oranı', 'HHI Dilimi', 'Fiyat Değişim', 'Kapanış', 'Yetersiz Geçmiş']
+    
+    st.dataframe(disp_df.style.background_gradient(subset=['Quant Skor'], cmap='RdYlGn'), use_container_width=True)
 else:
-    st.info("Henuz taranmis veri bulunmuyor. GitHub Actions calismasini bekleyin.")
+    st.warning("Veri bulunamadı. Lütfen taramanın tamamlanmasını bekleyin.")
