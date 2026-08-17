@@ -2,14 +2,15 @@ name: BIST Daily Quant Scan
 
 on:
   schedule:
-    - cron: '45 15 * * 1-5' # Hafta içi 18:45 TSİ
-  workflow_dispatch: # Manuel çalıştırma butonu
+    # Her gün Türkiye saati ile 17:30'da çalışır (14:30 UTC)
+    - cron: '30 14 * * *'
+  workflow_dispatch: # Bu satır manuel çalıştırma butonunu aktif eder
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout repo
         uses: actions/checkout@v3
         with:
           persist-credentials: true
