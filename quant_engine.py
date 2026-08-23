@@ -4,57 +4,55 @@ import os
 
 GECMIS_DOSYA = "gecmis_veri.csv"
 RVOL_PENCERE = 20
-MOM_PENCERE = 5 # N günlük momentum
+MOM_PENCERE = 5 
 
 def gecmis_veriyi_yukle():
     if os.path.exists(GECMIS_DOSYA):
-        df = pd.read_csv(GECMIS_DOSYA)
-        df['tarih'] = pd.to_datetime(df['tarih'])
-        return df
+        try:
+            df = pd.read_csv(GECMIS_DOSYA)
+            df['tarih'] = pd.to_datetime(df['tarih'])
+            return df
+        except: return pd.DataFrame()
     return pd.DataFrame()
 
 def calculate_quant_scores(df, df_gecmis):
     if df.empty: return df
 
-    # --- 1) ESKİ TEMEL: RVOL HESAPLA ---
+    # 1) RVOL Hesapla
     rvol_list = []
     for ticker in df['ticker']:
-        hist_v = df_gecmis[df_gecmis['ticker'] == ticker]['volume'].tail(RVOL_PENCERE)
-        rvol = df.loc[df['ticker']==ticker, 'volume'].iloc[0] / hist_v.mean() if len(hist_v) >= 5 else 1.0
-        rvol_list.append(rvol)
+        hist_v = df_gecmis[df_gecmis['ticker'] == ticker]['volume'].tail(RVOL_PENCERE) if not df_gecmis.empty else []
+        rvol_list.append(df.loc[df['ticker']==ticker, 'volume'].iloc[0] / hist_v.mean() if len(hist_v) >= 5 else 1.0)
     df['rvol_ratio'] = rvol_list
 
-    # --- 2) YENİ GÜÇLENDİRME: GATEKEEPER (min mantığı) ---
+    # 2) Gatekeeper (Takas Mom + Yabancı Akış)
     hhi_mom_list, flow_dense_list = [], []
     for ticker in df['ticker']:
-        # HHI Momentum (N günlük değişim)
-        hist_hhi = df_gecmis[df_gecmis['ticker'] == ticker]['hhi_score'].tail(MOM_PENCERE)
-        hhi_mom = df.loc[df['ticker']==ticker, 'hhi_score'].iloc[0] - (hist_hhi.iloc[0] if len(hist_hhi) > 0 else df.loc[df['ticker']==ticker, 'hhi_score'].iloc[0])
+        ticker_gecmis = df_gecmis[df_gecmis['ticker'] == ticker] if not df_gecmis.empty else pd.DataFrame()
+        
+        # HHI Mom
+        hist_hhi = ticker_gecmis['hhi_score'].tail(MOM_PENCERE)
+        h_now = df.loc[df['ticker']==ticker, 'hhi_score'].iloc[0]
+        hhi_mom = h_now - (hist_hhi.iloc[0] if len(hist_hhi)>0 else h_now)
         hhi_mom_list.append(hhi_mom)
         
-        # Yabancı Akış Yoğunluğu (Kümülatif Delta / Hacim)
-        hist_f = df_gecmis[df_gecmis['ticker'] == ticker]['foreign_ratio'].tail(MOM_PENCERE)
-        hist_v = df_gecmis[df_gecmis['ticker'] == ticker]['value_traded'].tail(MOM_PENCERE)
-        f_delta = df.loc[df['ticker']==ticker, 'foreign_ratio'].iloc[0] - (hist_f.iloc[0] if len(hist_f) > 0 else df.loc[df['ticker']==ticker, 'foreign_ratio'].iloc[0])
-        flow_dense = f_delta / (hist_v.mean() + 1e-9)
+        # Yabancı Akış
+        hist_f = ticker_gecmis['foreign_ratio'].tail(MOM_PENCERE)
+        hist_v = ticker_gecmis['value_traded'].tail(MOM_PENCERE)
+        f_now = df.loc[df['ticker']==ticker, 'foreign_ratio'].iloc[0]
+        f_delta = f_now - (hist_f.iloc[0] if len(hist_f)>0 else f_now)
+        flow_dense = f_delta / (hist_v.mean() + 1e-9) if len(hist_v)>0 else 0
         flow_dense_list.append(flow_dense)
         
     df['pct_hhi_mom'] = pd.Series(hhi_mom_list).rank(pct=True) * 100
     df['pct_flow'] = pd.Series(flow_dense_list).rank(pct=True) * 100
-    
-    # SENİN FORMÜLÜN: Leading Score = min(...)
     df['leading_score'] = df[['pct_hhi_mom', 'pct_flow']].min(axis=1)
 
-    # --- 3) NİHAİ BİRLEŞİK SKOR (SENTEZ) ---
-    # %30 RVOL (Hacim Gücü)
-    # %20 Fiyat Değişim (Momentum)
-    # %50 Leading Score (Kurumsal Teyit: Takas + Yabancı)
-    df['pct_rvol'] = df['rvol_ratio'].rank(pct=True) * 100
+    # 3) Nihai Skor (%30 RVOL, %20 Fiyat, %50 Kurumsal)
     df['pct_change'] = df['change_%'].rank(pct=True) * 100
-    
-    df['quant_score'] = (df['pct_rvol'] * 0.30) + (df['pct_change'] * 0.20) + (df['leading_score'] * 0.50)
+    df['quant_score'] = (df['rvol_ratio'].rank(pct=True)*30) + (df['pct_change']*20) + (df['leading_score']*50)
 
-    # Fark Hesapla
+    # 4) Skor Farkı (Düne Göre)
     df['score_diff'] = 0.0
     if not df_gecmis.empty:
         son_tarih = df_gecmis['tarih'].max()
