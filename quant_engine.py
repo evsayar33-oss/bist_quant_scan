@@ -18,19 +18,21 @@ def gecmis_veriyi_yukle():
 def calculate_quant_scores(df, df_gecmis):
     if df.empty: return df
 
-    # 1) RVOL Hesapla
+    # 1) RVOL (0-100 Skalası)
     rvol_list = []
     for ticker in df['ticker']:
         hist_v = df_gecmis[df_gecmis['ticker'] == ticker]['volume'].tail(RVOL_PENCERE) if not df_gecmis.empty else []
-        rvol_list.append(df.loc[df['ticker']==ticker, 'volume'].iloc[0] / hist_v.mean() if len(hist_v) >= 5 else 1.0)
+        rvol = df.loc[df['ticker']==ticker, 'volume'].iloc[0] / (hist_v.mean() + 1e-9) if len(hist_v) >= 5 else 1.0
+        rvol_list.append(rvol)
     df['rvol_ratio'] = rvol_list
+    df['pct_rvol'] = df['rvol_ratio'].rank(pct=True) * 100
 
-    # 2) Gatekeeper (Takas Mom + Yabancı Akış)
+    # 2) Gatekeeper (HHI Mom + Yabancı Akış - 0-100 Skalası)
     hhi_mom_list, flow_dense_list = [], []
     for ticker in df['ticker']:
         ticker_gecmis = df_gecmis[df_gecmis['ticker'] == ticker] if not df_gecmis.empty else pd.DataFrame()
         
-        # HHI Mom
+        # HHI Momentum
         hist_hhi = ticker_gecmis['hhi_score'].tail(MOM_PENCERE)
         h_now = df.loc[df['ticker']==ticker, 'hhi_score'].iloc[0]
         hhi_mom = h_now - (hist_hhi.iloc[0] if len(hist_hhi)>0 else h_now)
@@ -48,16 +50,19 @@ def calculate_quant_scores(df, df_gecmis):
     df['pct_flow'] = pd.Series(flow_dense_list).rank(pct=True) * 100
     df['leading_score'] = df[['pct_hhi_mom', 'pct_flow']].min(axis=1)
 
-    # 3) Nihai Skor (%30 RVOL, %20 Fiyat, %50 Kurumsal)
+    # 3) Nihai Skor (Tamamı 0-100 arası verilerden oluşur)
     df['pct_change'] = df['change_%'].rank(pct=True) * 100
-    df['quant_score'] = (df['rvol_ratio'].rank(pct=True)*30) + (df['pct_change']*20) + (df['leading_score']*50)
+    # %30 Hacim Gücü + %20 Fiyat İvmesi + %50 Kurumsal Gatekeeper
+    df['quant_score'] = (df['pct_rvol'] * 0.30) + (df['pct_change'] * 0.20) + (df['leading_score'] * 0.50)
 
     # 4) Skor Farkı (Düne Göre)
+    df['prev_quant_score'] = np.nan
     df['score_diff'] = 0.0
-    if not df_gecmis.empty:
+    if not df_gecmis.empty and 'quant_score' in df_gecmis.columns:
         son_tarih = df_gecmis['tarih'].max()
         df_son = df_gecmis[df_gecmis['tarih'] == son_tarih]
         eski_map = dict(zip(df_son['ticker'], df_son['quant_score']))
-        df['score_diff'] = df['quant_score'] - df['ticker'].map(eski_map).fillna(df['quant_score'])
+        df['prev_quant_score'] = df['ticker'].map(eski_map).fillna(df['quant_score'])
+        df['score_diff'] = df['quant_score'] - df['prev_quant_score']
 
     return df.sort_values(by='quant_score', ascending=False).reset_index(drop=True)
