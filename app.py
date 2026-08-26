@@ -3,12 +3,10 @@ import pandas as pd
 import numpy as np
 import os
 
-# Sayfa Ayarları
 st.set_page_config(page_title="BIST Quant Terminal", layout="wide", page_icon="🛡️")
 
 st.title("🛡️ BIST Alpha Overlay & Kurumsal Akış Terminali")
 
-# Önbellek kaldırıldı - Her zaman en taze veriyi okur
 def load_data():
     if os.path.exists("gecmis_veri.csv"):
         try:
@@ -24,32 +22,16 @@ def load_data():
 df_gecmis = load_data()
 
 if not df_gecmis.empty:
-    # 1. EN GÜNCEL GÜNÜ SEÇ
     son_tarih = df_gecmis['tarih'].max()
     df = df_gecmis[df_gecmis['tarih'] == son_tarih].copy()
     
     st.caption(f"🗓️ Son Güncelleme: **{son_tarih.strftime('%Y-%m-%d')}** | 📊 Taranan Hisse: **{len(df)}**")
 
-    # =========================================================================
-    # SIFIRLARI CANLI EKRANDA ANINDA DÜZELTME MOTORU (KESİN KORUMA)
-    # =========================================================================
-    
-    # 1. Yabancı Takas Oranı Sıfırsa Doldur
-    if 'foreign_ratio' in df.columns:
-        df['foreign_ratio'] = pd.to_numeric(df['foreign_ratio'], errors='coerce').fillna(0.0)
-        mask_f0 = (df['foreign_ratio'] == 0.0)
-        df.loc[mask_f0, 'foreign_ratio'] = np.round(df.loc[mask_f0, 'quant_score'] * 0.42 + 19.5, 2)
-    
-    # 2. HHI Konsantrasyon Sıfırsa Doldur
-    if 'hhi_score' in df.columns:
-        df['hhi_score'] = pd.to_numeric(df['hhi_score'], errors='coerce').fillna(0.0)
-        mask_h0 = (df['hhi_score'] == 0.0)
-        df.loc[mask_h0, 'hhi_score'] = np.round(df.loc[mask_h0, 'quant_score'] * 26.0 + 1250.0, 2)
-
-    # 3. Tüm Sayıları 2 Basamağa Yuvarla (.000000 formatını temizle)
-    for col in ['quant_score', 'score_diff', 'foreign_ratio', 'hhi_score', 'change_%']:
+    # Sayısal formatlamalar (2 basamaklı temiz görünüm)
+    format_cols = ['quant_score', 'score_diff', 'foreign_ratio', 'hhi_score', 'change_%']
+    for col in format_cols:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0).round(2)
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).round(2)
 
     # --- YAN PANEL: HİSSE SORGULAMA ---
     st.sidebar.header("🔍 Kurumsal Hisse Sorgu")
@@ -58,8 +40,8 @@ if not df_gecmis.empty:
     if search_ticker:
         h_data = df[df['ticker'] == search_ticker]
         if not h_data.empty:
-            score = h_data['quant_score'].iloc[0]
-            diff = h_data['score_diff'].iloc[0]
+            score = float(h_data['quant_score'].iloc[0])
+            diff = float(h_data['score_diff'].iloc[0])
             
             status = "🚀 GÜÇLÜ (ALIM/TOPLAMA)" if score > 30 else ("⚠️ RİSKLİ (DAĞITIM)" if score < 15 else "NÖTR")
             
@@ -90,7 +72,7 @@ if not df_gecmis.empty:
     
     df_display = df[display_cols].rename(columns=col_names)
 
-    # 1. LİDERLER
+    # 1. LİDERLER TABLOSU
     st.subheader("🏆 Kurumsal Onaylı Liderler (Top 20)")
     st.markdown("*Akıllı Para (Smart Money) onayı almış, gün sonu mikro-yapısı (CLV) güçlü ve hacmi stabil hisseler.*")
     top_20 = df_display.sort_values(by='Alpha Skor', ascending=False).head(20)
@@ -141,4 +123,4 @@ if not df_gecmis.empty:
         )
 
 else:
-    st.info("🕒 Veri bekleniyor...")
+    st.info("🕒 Veritabanı oluşturuluyor... Lütfen Actions üzerinden Run workflow yapınız.")
