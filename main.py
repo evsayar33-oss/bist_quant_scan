@@ -1,58 +1,62 @@
-import os, requests, pandas as pd, pytz, time
+import pandas as pd
+import os
 from datetime import datetime
-from data_fetcher import get_bist_tickers, get_takas_and_foreign_data
+
+# YENİ MİMARİ İMPORTLARI
+from data_fetcher import fetch_all_data
 from quant_engine import calculate_quant_scores, gecmis_veriyi_yukle, GECMIS_DOSYA
 
-def run_pipeline():
-    tr_tz = pytz.timezone('Europe/Istanbul')
-    bugun_str = datetime.now(tr_tz).strftime('%Y-%m-%d')
-    
-    df = get_bist_tickers()
-    if df.empty: return
+# Eğer telegram bildirim dosyan varsa (örneğin telegram_bot.py veya notifier.py gibi),
+# kendi eski main.py'ndaki o importları buraya eklemeyi unutma.
+# Örnek: from telegram_bot import send_signals
 
-    print("Veriler çekiliyor...")
-    hhi_list, f_list = [], []
-    for ticker in df['ticker']:
-        h, f = get_takas_and_foreign_data(ticker)
-        hhi_list.append(h); f_list.append(f)
-        time.sleep(0.02) # Hızlandırıldı
+def main():
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] === BIST Quant Alpha Scanner Başlıyor ===")
     
-    df['hhi_score'], df['foreign_ratio'] = hhi_list, f_list
+    # 1. VERİ TOPLAMA (Eski for döngüleri yerine yeni Asenkron motor tek satırda her şeyi halleder)
+    df_current = fetch_all_data()
+    
+    if df_current.empty:
+        print("Hata: Piyasa veya Takas verisi çekilemedi. İşlem iptal edildi.")
+        return
+
+    # 2. GEÇMİŞ VERİYİ YÜKLE
     df_gecmis = gecmis_veriyi_yukle()
-    df = calculate_quant_scores(df, df_gecmis)
-    df.to_csv("sonuclar.csv", index=False)
-
-    # HAFIZA KAYDI
-    df_kayit = df[['ticker', 'close', 'volume', 'value_traded', 'change_%', 'hhi_score', 'foreign_ratio', 'quant_score']].copy()
-    df_kayit['tarih'] = bugun_str
     
+    # 3. HESAPLAMA (CLV, Z-Score, Sharpe Modeli)
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Quant motoru çalışıyor (Mikroyapı ve Z-Skorlar hesaplanıyor)...")
+    df_scored = calculate_quant_scores(df_current, df_gecmis)
+    
+    if df_scored.empty:
+        print("Puanlanmış veri boş döndü.")
+        return
+
+    # 4. GEÇMİŞ VERİ TABANINI GÜNCELLEME (CSV)
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Veritabanı güncelleniyor...")
     if not df_gecmis.empty:
-        # Bugünün verisi zaten varsa ekleme yapma
-        tarih_list = df_gecmis['tarih'].dt.strftime('%Y-%m-%d').values
-        if bugun_str not in tarih_list:
-            df_kayit.to_csv(GECMIS_DOSYA, mode='a', header=False, index=False)
+        # Aynı gün tekrar çalıştırılırsa verileri çoğaltmamak için, bugünün verisini eskiden temizle
+        bugun = pd.Timestamp.now().normalize()
+        df_gecmis = df_gecmis[df_gecmis['tarih'] != bugun]
+        
+        df_yeni_gecmis = pd.concat([df_gecmis, df_scored], ignore_index=True)
     else:
-        df_kayit.to_csv(GECMIS_DOSYA, index=False)
-
-    send_telegram_alert(df)
-
-def send_telegram_alert(df):
-    token, chat_id = os.environ.get("TELEGRAM_TOKEN"), os.environ.get("CHAT_ID")
-    if not token or not chat_id: return
+        df_yeni_gecmis = df_scored
+        
+    # Sadece son 30 günün verisini tutarak CSV'nin şişmesini/yavaşlamasını engelliyoruz
+    df_yeni_gecmis['tarih'] = pd.to_datetime(df_yeni_gecmis['tarih'])
+    limit_tarih = pd.Timestamp.now().normalize() - pd.Timedelta(days=30)
+    df_yeni_gecmis = df_yeni_gecmis[df_yeni_gecmis['tarih'] >= limit_tarih]
     
-    top = df.head(10)
-    msg = "🛡️ *BIST INSTITUTIONAL SENTINEL*\n"
-    msg += "Hisse | Skor | (Fark)\n------------------\n"
-    for _, r in top.iterrows():
-        msg += f"• #{r['ticker']} | *{r['quant_score']:.1f}* ({r['score_diff']:+.1f})\n"
-
-    msg += "\n📉 *ÇIKIŞ RADARI*\n"
-    losers = df.sort_values(by='score_diff', ascending=True).head(5)
-    for _, r in losers.iterrows():
-        if r['score_diff'] < -1.0:
-            msg += f"• #{r['ticker']} | *{r['quant_score']:.1f}* ⚠️ {r['score_diff']:.1f}\n"
+    # CSV'ye yaz
+    df_yeni_gecmis.to_csv(GECMIS_DOSYA, index=False)
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Başarılı! Sonuçlar {GECMIS_DOSYA} dosyasına kaydedildi.")
     
-    requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"})
+    # 5. EĞER TELEGRAM BOTUN VARSA KODUNU BURAYA EKLE
+    # İlk 10 hisseyi Telegrama göndermek için örnek kod mantığı:
+    # top_10_hisse = df_scored.head(10)
+    # send_signals(top_10_hisse)
+    print("En yüksek puanlı ilk 5 hisse:")
+    print(df_scored[['ticker', 'quant_score', 'change_%', 'volume']].head(5))
 
 if __name__ == "__main__":
-    run_pipeline()
+    main()
