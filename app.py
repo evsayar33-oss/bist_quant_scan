@@ -3,9 +3,10 @@ import pandas as pd
 import numpy as np
 import os
 
-st.set_page_config(page_title="BIST Quant Terminal", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="BIST Trend Initiation Terminal", layout="wide", page_icon="🎯")
 
-st.title("🛡️ BIST Alpha Overlay & Kurumsal Akış Terminali")
+st.title("🎯 BIST Orta Vadeli Trend Başlangıç & Sıkışma Terminali")
+st.markdown("*Aşırı primlenmiş hisseleri eleyen, haftalık taban sıkışmasından (Squeeze) ilk kopan hisseleri tespit eden Quant Motoru.*")
 
 def load_data():
     if os.path.exists("gecmis_veri.csv"):
@@ -25,16 +26,16 @@ if not df_gecmis.empty:
     son_tarih = df_gecmis['tarih'].max()
     df = df_gecmis[df_gecmis['tarih'] == son_tarih].copy()
     
-    st.caption(f"🗓️ Son Güncelleme: **{son_tarih.strftime('%Y-%m-%d')}** | 📊 Taranan Hisse: **{len(df)}**")
+    st.caption(f"🗓️ Son Tarama: **{son_tarih.strftime('%Y-%m-%d')}** | 📊 Taranan Hisse: **{len(df)}**")
 
-    # Sayısal formatlamalar (2 basamaklı temiz görünüm)
-    format_cols = ['quant_score', 'score_diff', 'foreign_ratio', 'hhi_score', 'change_%']
+    # Sayısal formatlamalar
+    format_cols = ['quant_score', 'score_diff', 'close', 'sma50', 'sma200', 'rvol', 'perf_1m', 'change_%']
     for col in format_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).round(2)
 
-    # --- YAN PANEL: HİSSE SORGULAMA ---
-    st.sidebar.header("🔍 Kurumsal Hisse Sorgu")
+    # --- SIDEBAR: HİSSE SORGULAMA ---
+    st.sidebar.header("🔍 Hisse Trend Analizi")
     search_ticker = st.sidebar.text_input("Hisse Kodu (Örn: THYAO):").upper()
     
     if search_ticker:
@@ -42,85 +43,82 @@ if not df_gecmis.empty:
         if not h_data.empty:
             score = float(h_data['quant_score'].iloc[0])
             diff = float(h_data['score_diff'].iloc[0])
+            status = h_data['status_tag'].iloc[0]
+            close_p = float(h_data['close'].iloc[0])
+            p_1m = float(h_data['perf_1m'].iloc[0])
             
-            status = "🚀 GÜÇLÜ (ALIM/TOPLAMA)" if score > 30 else ("⚠️ RİSKLİ (DAĞITIM)" if score < 15 else "NÖTR")
+            st.sidebar.metric(f"{search_ticker} Trend Skoru", f"{score:.1f}", f"{diff:+.1f}")
+            st.sidebar.write(f"**Durum:** {status}")
+            st.sidebar.write(f"**Fiyat:** {close_p} TL | **1 Aylık Getiri:** %{p_1m:.1f}")
             
-            st.sidebar.metric(f"{search_ticker} Alpha Skoru", f"{score:.2f}", f"{diff:+.2f}")
-            st.sidebar.write(f"**Piyasa Rejimi:** {status}")
-            
-            st.sidebar.write("📈 Momentum Trendi:")
+            st.sidebar.write("📈 Son 30 Günlük Skor Trendi:")
             trend = df_gecmis[df_gecmis['ticker'] == search_ticker][['tarih', 'quant_score']].sort_values('tarih')
             if not trend.empty:
                 trend.set_index('tarih', inplace=True)
                 st.sidebar.line_chart(trend['quant_score'])
         else:
-            st.sidebar.warning("Hisse veritabanında bulunamadı.")
+            st.sidebar.warning("Hisse bulunamadı veya likidite filtresine takıldı.")
 
-    # --- ANA TABLOLAR ---
-    display_cols = ['ticker', 'quant_score', 'score_diff', 'foreign_ratio', 'hhi_score', 'volume', 'change_%']
+    # --- 1. ANA TABLO: TREND BAŞLANGICI VE SIKIŞMADAN KOPANLAR ---
+    st.subheader("🚀 Erken Aşama Trend Başlangıçları (Kırmızı Oklar)")
+    st.markdown("*SMA50 tabanına yakın, volatilitesi sıkışmış ve ilk hacimli kırılımını yapan adaylar.*")
+    
+    # 50 puan ve üstü alan gerçek fırsatlar
+    top_candidates = df[df['quant_score'] >= 45.0].sort_values(by='quant_score', ascending=False)
+    
+    display_cols = ['ticker', 'quant_score', 'score_diff', 'status_tag', 'close', 'sma50', 'rvol', 'perf_1m', 'change_%']
     display_cols = [c for c in display_cols if c in df.columns]
     
     col_names = {
         'ticker': 'Hisse',
-        'quant_score': 'Alpha Skor',
-        'score_diff': 'Fark (1G)',
-        'foreign_ratio': 'Yabancı Takas %',
-        'hhi_score': 'HHI Konsantrasyon',
-        'volume': 'Hacim',
-        'change_%': 'Fiyat %'
+        'quant_score': 'Trend Skoru',
+        'score_diff': 'İvme Farkı',
+        'status_tag': 'Formasyon Durumu',
+        'close': 'Fiyat (TL)',
+        'sma50': '50 Günlük Ort.',
+        'rvol': 'RVOL (Hacim Katı)',
+        'perf_1m': '1 Aylık Değişim %',
+        'change_%': 'Günlük %'
     }
     
-    df_display = df[display_cols].rename(columns=col_names)
-
-    # 1. LİDERLER TABLOSU
-    st.subheader("🏆 Kurumsal Onaylı Liderler (Top 20)")
-    st.markdown("*Akıllı Para (Smart Money) onayı almış, gün sonu mikro-yapısı (CLV) güçlü ve hacmi stabil hisseler.*")
-    top_20 = df_display.sort_values(by='Alpha Skor', ascending=False).head(20)
-    st.dataframe(
-        top_20.style.background_gradient(subset=['Alpha Skor'], cmap='Greens').format({
-            'Alpha Skor': '{:.2f}',
-            'Fark (1G)': '{:+.2f}',
-            'Yabancı Takas %': '{:.2f}',
-            'HHI Konsantrasyon': '{:.2f}',
-            'Fiyat %': '%{:.2f}'
-        }), 
-        use_container_width=True, 
-        hide_index=True
-    )
+    if not top_candidates.empty:
+        st.dataframe(
+            top_candidates[display_cols].rename(columns=col_names).style.background_gradient(subset=['Trend Skoru'], cmap='Greens').format({
+                'Trend Skoru': '{:.1f}',
+                'İvme Farkı': '{:+.1f}',
+                'Fiyat (TL)': '{:.2f}',
+                '50 Günlük Ort.': '{:.2f}',
+                'RVOL (Hacim Katı)': '{:.1f}x',
+                '1 Aylık Değişim %': '%{:.1f}',
+                'Günlük %': '%{:.1f}'
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("ℹ️ Bugün yeni bir taban sıkışma kırılımı gerçekleşmedi. Sistem tepedeki hisseleri bilerek elemektedir.")
 
     st.divider()
 
-    # 2. MOMENTUM VE ÇIKIŞ
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("🚀 Atak Yapanlar (Momentum)")
-        gainers = df_display[df_display['Fark (1G)'] > 0].sort_values(by='Fark (1G)', ascending=False).head(10)
+    # --- 2. DİSKALİFİYE EDİLENLER: AŞIRI ŞİŞMİŞ TEPEDEKİ HİSSELER ---
+    st.subheader("🚫 Aşırı Primli / Tepe Formasyonları (Uzak Durulması Gerekenler)")
+    st.markdown("*50 günlük ortalamasından aşırı uzaklaşmış veya son 1 ayda çok sert yükselmiş hisseler.*")
+    
+    overextended = df[df['status_tag'].str.contains('AŞIRI ŞİŞMİŞ', na=False)].sort_values(by='perf_1m', ascending=False).head(10)
+    if not overextended.empty:
         st.dataframe(
-            gainers.style.background_gradient(subset=['Fark (1G)'], cmap='Blues').format({
-                'Alpha Skor': '{:.2f}',
-                'Fark (1G)': '{:+.2f}',
-                'Yabancı Takas %': '{:.2f}',
-                'HHI Konsantrasyon': '{:.2f}',
-                'Fiyat %': '%{:.2f}'
-            }), 
-            use_container_width=True, 
-            hide_index=True
-        )
-        
-    with c2:
-        st.subheader("⚠️ Çıkış Radarı (Dağıtım)")
-        losers = df_display[df_display['Fark (1G)'] < 0].sort_values(by='Fark (1G)', ascending=True).head(10)
-        st.dataframe(
-            losers.style.background_gradient(subset=['Fark (1G)'], cmap='Reds_r').format({
-                'Alpha Skor': '{:.2f}',
-                'Fark (1G)': '{:+.2f}',
-                'Yabancı Takas %': '{:.2f}',
-                'HHI Konsantrasyon': '{:.2f}',
-                'Fiyat %': '%{:.2f}'
-            }), 
-            use_container_width=True, 
+            overextended[display_cols].rename(columns=col_names).style.background_gradient(subset=['1 Aylık Değişim %'], cmap='Reds').format({
+                'Trend Skoru': '{:.1f}',
+                'İvme Farkı': '{:+.1f}',
+                'Fiyat (TL)': '{:.2f}',
+                '50 Günlük Ort.': '{:.2f}',
+                'RVOL (Hacim Katı)': '{:.1f}x',
+                '1 Aylık Değişim %': '%{:.1f}',
+                'Günlük %': '%{:.1f}'
+            }),
+            use_container_width=True,
             hide_index=True
         )
 
 else:
-    st.info("🕒 Veritabanı oluşturuluyor... Lütfen Actions üzerinden Run workflow yapınız.")
+    st.info("🕒 Sistem başlatılıyor... Lütfen GitHub Actions üzerinden 'Run workflow' yapınız.")
